@@ -1,5 +1,4 @@
 const EARTH_RADIUS_KM = 6371;
-
 const CELESTRAK_GROUP = "cosmos-2251-debris";
 const CELESTRAK_TLE_URL = `https://celestrak.org/NORAD/elements/gp.php?GROUP=${CELESTRAK_GROUP}&FORMAT=tle`;
 
@@ -11,7 +10,7 @@ const state = {
   showCorrected: true,
   latestRows: [],
   latestMetrics: null,
-  catalogSource: "",
+  catalogSource: ""
 };
 
 const rawColor = "#e76f51";
@@ -29,52 +28,9 @@ const elements = {
   rmseRaw: document.getElementById("rmse-raw"),
   rmseCorrected: document.getElementById("rmse-corrected"),
   maeRaw: document.getElementById("mae-raw"),
-  maeCorrected: document.getElementById("mae-corrected")
+  maeCorrected: document.getElementById("mae-corrected"),
+  globe: document.getElementById("globe")
 };
-
-const globeContainer = document.getElementById("globe");
-
-const globe = Globe()(globeContainer)
-  .globeImageUrl("https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg")
-  .bumpImageUrl("https://unpkg.com/three-globe/example/img/earth-topology.png")
-  .backgroundImageUrl("https://unpkg.com/three-globe/example/img/night-sky.png")
-  .showAtmosphere(true)
-  .atmosphereColor("#9ad1ff")
-  .atmosphereAltitude(0.14)
-  .lineHoverPrecision(0)
-  .pointAltitude("alt")
-  .pointRadius("size")
-  .pointColor("color")
-  .pointLabel((d) => d.label)
-  .pathPointLat("lat")
-  .pathPointLng("lng")
-  .pathPointAlt("alt")
-  .pathTransitionDuration(0)
-  .pathStroke(0.85)
-  .pathColor((d) => d.color)
-  .pathDashLength((d) => d.dashLength)
-  .pathDashGap((d) => d.dashGap)
-  .pathDashAnimateTime((d) => d.dashAnimateMs);
-
-globe.controls().autoRotate = true;
-globe.controls().autoRotateSpeed = 0.55;
-globe.controls().minDistance = 180;
-globe.controls().maxDistance = 450;
-globe.pointOfView({ lat: 18, lng: 15, altitude: 2.3 }, 1000);
-
-function syncGlobeSize() {
-  globe.width(globeContainer.clientWidth);
-  globe.height(globeContainer.clientHeight);
-}
-
-syncGlobeSize();
-
-window.addEventListener("resize", syncGlobeSize);
-
-if (typeof ResizeObserver !== "undefined") {
-  const resizeObserver = new ResizeObserver(syncGlobeSize);
-  resizeObserver.observe(globeContainer);
-}
 
 function toGlobeAlt(altKm) {
   return altKm / EARTH_RADIUS_KM;
@@ -82,18 +38,24 @@ function toGlobeAlt(altKm) {
 
 function formatKm(value) {
   return `${value.toFixed(2)} km`;
+}
 
 function parseTleExponent(field) {
-  const text = field.trim();
+  const text = String(field || "").trim();
   if (!text) {
     return 0;
   }
 
-  const sign = text[0] === "-" ? -1 : 1;
-  const digits = text.replace(/[ +\-]/g, "");
-  const body = digits.slice(0, -2) || "0";
-  const exponent = Number(digits.slice(-2));
-  return sign * Number(`0.${body}`) * 10 ** exponent;
+  const match = text.match(/^([+-]?)(\d+)([+-]\d+)$/);
+  if (match) {
+    const sign = match[1] === "-" ? -1 : 1;
+    const mantissa = Number(`0.${match[2]}`);
+    const exponent = Number(match[3]);
+    return sign * mantissa * 10 ** exponent;
+  }
+
+  const numeric = Number(text.replace(/\s+/g, ""));
+  return Number.isFinite(numeric) ? numeric : 0;
 }
 
 function parseCelestrakTleCatalog(text) {
@@ -109,6 +71,10 @@ function parseCelestrakTleCatalog(text) {
     const tle2 = lines[index + 2].trim();
     const catnr = Number.parseInt(tle2.slice(2, 7), 10);
 
+    if (!Number.isFinite(catnr)) {
+      continue;
+    }
+
     items.push({
       id: `NORAD-${catnr}`,
       object_id: `NORAD-${catnr}`,
@@ -121,83 +87,126 @@ function parseCelestrakTleCatalog(text) {
       arg_perigee: Number.parseFloat(tle2.slice(34, 42)),
       raan: Number.parseFloat(tle2.slice(17, 25)),
       bstar: parseTleExponent(tle1.slice(53, 61)),
-      seed: (catnr % 1000) / 100,
+      seed: (catnr % 1000) / 100
     });
   }
 
   return items;
 }
-}
 
-function buildGlobeData(rows) {
-  const paths = [];
-  const points = [];
+function buildGlobeTraces(rows) {
+  const traces = [];
 
   if (state.showRaw) {
-    paths.push({
-      id: "path-raw",
-      points: rows.map((r) => ({ lat: r.raw.lat, lng: r.raw.lng, alt: toGlobeAlt(r.raw.altKm) })),
-      color: rawColor,
-      dashLength: 0.58,
-      dashGap: 0.22,
-      dashAnimateMs: 1700
+    traces.push({
+      type: "scattergeo",
+      mode: "lines",
+      name: "Raw SGP4",
+      lon: rows.map((row) => row.raw.lng),
+      lat: rows.map((row) => row.raw.lat),
+      line: { color: rawColor, width: 2.4 },
+      hovertemplate: "Raw SGP4<br>Lat %{lat:.2f}°<br>Lng %{lon:.2f}°<br>Alt %{customdata:.1f} km<extra></extra>",
+      customdata: rows.map((row) => row.raw.altKm)
     });
   }
 
   if (state.showCorrected) {
-    paths.push({
-      id: "path-corrected",
-      points: rows.map((r) => ({ lat: r.corrected.lat, lng: r.corrected.lng, alt: toGlobeAlt(r.corrected.altKm) })),
-      color: correctedColor,
-      dashLength: 0.72,
-      dashGap: 0.16,
-      dashAnimateMs: 1250
+    traces.push({
+      type: "scattergeo",
+      mode: "lines",
+      name: "Corrected",
+      lon: rows.map((row) => row.corrected.lng),
+      lat: rows.map((row) => row.corrected.lat),
+      line: { color: correctedColor, width: 2.6 },
+      hovertemplate: "Corrected<br>Lat %{lat:.2f}°<br>Lng %{lon:.2f}°<br>Alt %{customdata:.1f} km<extra></extra>",
+      customdata: rows.map((row) => row.corrected.altKm)
     });
   }
 
-  paths.push({
-    id: "path-truth",
-    points: rows.map((r) => ({ lat: r.observed.lat, lng: r.observed.lng, alt: toGlobeAlt(r.observed.altKm) })),
-    color: truthColor,
-    dashLength: 0.92,
-    dashGap: 0.09,
-    dashAnimateMs: 0
+  traces.push({
+    type: "scattergeo",
+    mode: "lines",
+    name: "Observed",
+    lon: rows.map((row) => row.observed.lng),
+    lat: rows.map((row) => row.observed.lat),
+    line: { color: truthColor, width: 2.2, dash: "dot" },
+    hovertemplate: "Observed<br>Lat %{lat:.2f}°<br>Lng %{lon:.2f}°<br>Alt %{customdata:.1f} km<extra></extra>",
+    customdata: rows.map((row) => row.observed.altKm)
   });
 
   const latest = rows[rows.length - 1];
-
   if (state.showRaw) {
-    points.push({
-      lat: latest.raw.lat,
-      lng: latest.raw.lng,
-      alt: toGlobeAlt(latest.raw.altKm),
-      size: 0.18,
-      color: rawColor,
-      label: "Raw SGP4"
+    traces.push({
+      type: "scattergeo",
+      mode: "markers",
+      name: "Raw end",
+      lon: [latest.raw.lng],
+      lat: [latest.raw.lat],
+      marker: { size: 10, color: rawColor, line: { color: "#ffffff", width: 0.5 } },
+      hovertemplate: "Raw end<extra></extra>"
     });
   }
 
   if (state.showCorrected) {
-    points.push({
-      lat: latest.corrected.lat,
-      lng: latest.corrected.lng,
-      alt: toGlobeAlt(latest.corrected.altKm),
-      size: 0.18,
-      color: correctedColor,
-      label: "Corrected"
+    traces.push({
+      type: "scattergeo",
+      mode: "markers",
+      name: "Corrected end",
+      lon: [latest.corrected.lng],
+      lat: [latest.corrected.lat],
+      marker: { size: 10, color: correctedColor, line: { color: "#ffffff", width: 0.5 } },
+      hovertemplate: "Corrected end<extra></extra>"
     });
   }
 
-  points.push({
-    lat: latest.observed.lat,
-    lng: latest.observed.lng,
-    alt: toGlobeAlt(latest.observed.altKm),
-    size: 0.18,
-    color: truthColor,
-    label: "Observed truth"
+  traces.push({
+    type: "scattergeo",
+    mode: "markers",
+    name: "Observed end",
+    lon: [latest.observed.lng],
+    lat: [latest.observed.lat],
+    marker: { size: 10, color: truthColor, line: { color: "#ffffff", width: 0.5 } },
+    hovertemplate: "Observed end<extra></extra>"
   });
 
-  return { paths, points };
+  return traces;
+}
+
+function renderGlobe(rows) {
+  const traces = buildGlobeTraces(rows);
+  const layout = {
+    margin: { t: 0, r: 0, b: 0, l: 0 },
+    paper_bgcolor: "rgba(0,0,0,0)",
+    plot_bgcolor: "rgba(0,0,0,0)",
+    showlegend: true,
+    legend: {
+      orientation: "h",
+      x: 0.02,
+      y: 0.98,
+      font: { color: "#dce7f2", size: 11 },
+      bgcolor: "rgba(6, 18, 31, 0.72)",
+      bordercolor: "rgba(255,255,255,0.12)",
+      borderwidth: 1
+    },
+    geo: {
+      projection: { type: "orthographic", rotation: { lon: 20, lat: 12, roll: 0 } },
+      showframe: false,
+      showland: true,
+      landcolor: "#1b3450",
+      showocean: true,
+      oceancolor: "#06121f",
+      showlakes: true,
+      lakecolor: "#06121f",
+      showcoastlines: true,
+      coastlinecolor: "#6e8daa",
+      showcountries: false,
+      bgcolor: "rgba(0,0,0,0)",
+      lataxis: { showgrid: true, gridcolor: "rgba(255,255,255,0.08)", dtick: 30 },
+      lonaxis: { showgrid: true, gridcolor: "rgba(255,255,255,0.08)", dtick: 30 }
+    }
+  };
+
+  return Plotly.react(elements.globe, traces, layout, { responsive: true, displayModeBar: false });
 }
 
 function renderChart(rows, metrics) {
@@ -211,37 +220,13 @@ function renderChart(rows, metrics) {
         y: metrics.rawErrors,
         type: "scatter",
         mode: "lines",
-  try {
-    const response = await fetch(CELESTRAK_TLE_URL);
-    if (!response.ok) {
-      throw new Error(`CelesTrak fetch failed: ${response.status}`);
-    }
-
-    const text = await response.text();
-    const items = parseCelestrakTleCatalog(text);
-    state.catalogSource = `Live CelesTrak feed: ${CELESTRAK_GROUP}`;
-    if (elements.catalogMeta) {
-      elselectedDebris = state.debrisCatalog.find((item) => item.id === state.selectedId);
-  const response = await fetch("/api/trajectory", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      horizon_mins: state.horizonMins,
-      debris: selectedDebris,
-    }),
-  });
-
-    if (!response.ok) {
-      throw new Error(`Failed to load debris catalog: ${response.status}`);
-    }
-
-    const payload = await response.json();
-    state.catalogSource = "Local fallback catalog";
-    if (elements.catalogMeta) {
-      elements.catalogMeta.textContent = `${payload.items.length} objects loaded from ${state.catalogSource}`;
-    }
-    return payload.items;
-  },
+        name: "Raw SGP4 Error",
+        line: { color: rawColor, width: 2.2 }
+      },
+      {
+        x: minutes,
+        y: metrics.correctedErrors,
+        type: "scatter",
         mode: "lines",
         name: "Corrected Error",
         line: { color: correctedColor, width: 2.4 }
@@ -280,22 +265,46 @@ function updateMetrics(metrics) {
 }
 
 async function fetchDebrisCatalog() {
-  const response = await fetch("/api/debris");
-  if (!response.ok) {
-    throw new Error(`Failed to load debris catalog: ${response.status}`);
-  }
+  try {
+    const response = await fetch(CELESTRAK_TLE_URL);
+    if (!response.ok) {
+      throw new Error(`CelesTrak fetch failed: ${response.status}`);
+    }
 
-  const payload = await response.json();
-  return payload.items;
+    const text = await response.text();
+    const items = parseCelestrakTleCatalog(text);
+    state.catalogSource = `Live CelesTrak feed: ${CELESTRAK_GROUP}`;
+    if (elements.catalogMeta) {
+      elements.catalogMeta.textContent = `${items.length} debris objects loaded from ${state.catalogSource}`;
+    }
+    return items;
+  } catch (error) {
+    console.warn("Falling back to local catalog:", error);
+    const response = await fetch("/api/debris");
+    if (!response.ok) {
+      throw new Error(`Failed to load debris catalog: ${response.status}`);
+    }
+
+    const payload = await response.json();
+    state.catalogSource = "Local fallback catalog";
+    if (elements.catalogMeta) {
+      elements.catalogMeta.textContent = `${payload.items.length} objects loaded from ${state.catalogSource}`;
+    }
+    return payload.items;
+  }
 }
 
 async function fetchTrajectory() {
-  const query = new URLSearchParams({
-    debris_id: state.selectedId,
-    horizon_mins: String(state.horizonMins)
+  const selectedDebris = state.debrisCatalog.find((item) => item.id === state.selectedId);
+  const response = await fetch("/api/trajectory", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      horizon_mins: state.horizonMins,
+      debris: selectedDebris,
+    })
   });
 
-  const response = await fetch(`/api/trajectory?${query.toString()}`);
   if (!response.ok) {
     throw new Error(`Failed to load trajectory: ${response.status}`);
   }
@@ -317,11 +326,9 @@ async function updateView() {
     state.latestRows = rows;
     state.latestMetrics = metrics;
 
-    const globeData = buildGlobeData(rows);
-    globe.pathsData(globeData.paths).pointsData(globeData.points);
-
-    updateMetrics(metrics);
+    await renderGlobe(rows);
     renderChart(rows, metrics);
+    updateMetrics(metrics);
 
     elements.tleText.textContent = `${debris.tle[0]}\n${debris.tle[1]}`;
 
@@ -338,8 +345,7 @@ function rerenderFromState() {
     return;
   }
 
-  const globeData = buildGlobeData(state.latestRows);
-  globe.pathsData(globeData.paths).pointsData(globeData.points);
+  renderGlobe(state.latestRows);
   renderChart(state.latestRows, state.latestMetrics);
 }
 
@@ -385,6 +391,9 @@ async function bootstrap() {
   }
 
   await updateView();
+  window.addEventListener("resize", () => {
+    Plotly.Plots.resize(elements.globe);
+  });
 }
 
 bootstrap().catch((error) => {

@@ -1,5 +1,4 @@
 const EARTH_RADIUS_KM = 6371;
-
 const CELESTRAK_GROUP = "cosmos-2251-debris";
 const CELESTRAK_TLE_URL = `https://celestrak.org/NORAD/elements/gp.php?GROUP=${CELESTRAK_GROUP}&FORMAT=tle`;
 
@@ -68,7 +67,6 @@ function syncGlobeSize() {
 }
 
 syncGlobeSize();
-
 window.addEventListener("resize", syncGlobeSize);
 
 if (typeof ResizeObserver !== "undefined") {
@@ -82,18 +80,24 @@ function toGlobeAlt(altKm) {
 
 function formatKm(value) {
   return `${value.toFixed(2)} km`;
+}
 
 function parseTleExponent(field) {
-  const text = field.trim();
+  const text = String(field || "").trim();
   if (!text) {
     return 0;
   }
 
-  const sign = text[0] === "-" ? -1 : 1;
-  const digits = text.replace(/[ +\-]/g, "");
-  const body = digits.slice(0, -2) || "0";
-  const exponent = Number(digits.slice(-2));
-  return sign * Number(`0.${body}`) * 10 ** exponent;
+  const match = text.match(/^([+-]?)(\d+)([+-]\d+)$/);
+  if (match) {
+    const sign = match[1] === "-" ? -1 : 1;
+    const mantissa = Number(`0.${match[2]}`);
+    const exponent = Number(match[3]);
+    return sign * mantissa * 10 ** exponent;
+  }
+
+  const numeric = Number(text.replace(/\s+/g, ""));
+  return Number.isFinite(numeric) ? numeric : 0;
 }
 
 function parseCelestrakTleCatalog(text) {
@@ -108,6 +112,10 @@ function parseCelestrakTleCatalog(text) {
     const tle1 = lines[index + 1].trim();
     const tle2 = lines[index + 2].trim();
     const catnr = Number.parseInt(tle2.slice(2, 7), 10);
+
+    if (!Number.isFinite(catnr)) {
+      continue;
+    }
 
     items.push({
       id: `NORAD-${catnr}`,
@@ -126,7 +134,6 @@ function parseCelestrakTleCatalog(text) {
   }
 
   return items;
-}
 }
 
 function buildGlobeData(rows) {
@@ -211,37 +218,13 @@ function renderChart(rows, metrics) {
         y: metrics.rawErrors,
         type: "scatter",
         mode: "lines",
-  try {
-    const response = await fetch(CELESTRAK_TLE_URL);
-    if (!response.ok) {
-      throw new Error(`CelesTrak fetch failed: ${response.status}`);
-    }
-
-    const text = await response.text();
-    const items = parseCelestrakTleCatalog(text);
-    state.catalogSource = `Live CelesTrak feed: ${CELESTRAK_GROUP}`;
-    if (elements.catalogMeta) {
-      elselectedDebris = state.debrisCatalog.find((item) => item.id === state.selectedId);
-  const response = await fetch("/api/trajectory", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      horizon_mins: state.horizonMins,
-      debris: selectedDebris,
-    }),
-  });
-
-    if (!response.ok) {
-      throw new Error(`Failed to load debris catalog: ${response.status}`);
-    }
-
-    const payload = await response.json();
-    state.catalogSource = "Local fallback catalog";
-    if (elements.catalogMeta) {
-      elements.catalogMeta.textContent = `${payload.items.length} objects loaded from ${state.catalogSource}`;
-    }
-    return payload.items;
-  },
+        name: "Raw SGP4 Error",
+        line: { color: rawColor, width: 2.2 }
+      },
+      {
+        x: minutes,
+        y: metrics.correctedErrors,
+        type: "scatter",
         mode: "lines",
         name: "Corrected Error",
         line: { color: correctedColor, width: 2.4 }
@@ -280,22 +263,46 @@ function updateMetrics(metrics) {
 }
 
 async function fetchDebrisCatalog() {
-  const response = await fetch("/api/debris");
-  if (!response.ok) {
-    throw new Error(`Failed to load debris catalog: ${response.status}`);
-  }
+  try {
+    const response = await fetch(CELESTRAK_TLE_URL);
+    if (!response.ok) {
+      throw new Error(`CelesTrak fetch failed: ${response.status}`);
+    }
 
-  const payload = await response.json();
-  return payload.items;
+    const text = await response.text();
+    const items = parseCelestrakTleCatalog(text);
+    state.catalogSource = `Live CelesTrak feed: ${CELESTRAK_GROUP}`;
+    if (elements.catalogMeta) {
+      elements.catalogMeta.textContent = `${items.length} debris objects loaded from ${state.catalogSource}`;
+    }
+    return items;
+  } catch (error) {
+    console.warn("Falling back to local catalog:", error);
+    const response = await fetch("/api/debris");
+    if (!response.ok) {
+      throw new Error(`Failed to load debris catalog: ${response.status}`);
+    }
+
+    const payload = await response.json();
+    state.catalogSource = "Local fallback catalog";
+    if (elements.catalogMeta) {
+      elements.catalogMeta.textContent = `${payload.items.length} objects loaded from ${state.catalogSource}`;
+    }
+    return payload.items;
+  }
 }
 
 async function fetchTrajectory() {
-  const query = new URLSearchParams({
-    debris_id: state.selectedId,
-    horizon_mins: String(state.horizonMins)
+  const selectedDebris = state.debrisCatalog.find((item) => item.id === state.selectedId);
+  const response = await fetch("/api/trajectory", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      horizon_mins: state.horizonMins,
+      debris: selectedDebris,
+    }),
   });
 
-  const response = await fetch(`/api/trajectory?${query.toString()}`);
   if (!response.ok) {
     throw new Error(`Failed to load trajectory: ${response.status}`);
   }

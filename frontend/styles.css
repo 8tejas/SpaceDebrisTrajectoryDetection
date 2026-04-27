@@ -97,6 +97,13 @@ body {
   gap: 0.62rem;
 }
 
+.catalog-meta {
+  margin: 0 0 0.15rem;
+  color: #9cb0c5;
+  font-size: 0.82rem;
+  font-family: "IBM Plex Mono", monospace;
+}
+
 .controls h2,
 .metrics h2,
 .chart-panel h2 {
