@@ -56,8 +56,15 @@ class ModelService:
             self.status["warnings"].append("joblib is not installed, scalers cannot be loaded.")
             return
 
-        scaler_x_path = self.model_dir / "scaler_X.pkl"
-        scaler_y_path = self.model_dir / "scaler_y.pkl"
+        # Handle both directory and file formats for model storage
+        # If model_dir is a .keras file, look for scalers in parent directory
+        if self.model_dir.is_file() and self.model_dir.suffix == ".keras":
+            scaler_dir = self.model_dir.parent
+        else:
+            scaler_dir = self.model_dir
+
+        scaler_x_path = scaler_dir / "scaler_X.pkl"
+        scaler_y_path = scaler_dir / "scaler_y.pkl"
 
         if scaler_x_path.exists():
             self.scaler_x = joblib.load(scaler_x_path)
@@ -71,7 +78,7 @@ class ModelService:
         else:
             self.status["warnings"].append("scaler_y.pkl not found; using raw model outputs as dx/dy/dz.")
 
-        metadata_path = self.model_dir / "metadata.json"
+        metadata_path = scaler_dir / "metadata.json"
         if metadata_path.exists():
             try:
                 metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
